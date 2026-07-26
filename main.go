@@ -20,6 +20,15 @@ const (
 	defaultMTPn = 2
 )
 
+// quirkOverrideKV maps repos with known-broken GGUF tokenizer metadata to
+// the llama.cpp --override-kv fix needed for correct end-of-turn detection.
+// unsloth/Laguna-S-2.1-GGUF: GGUF's eos/eot_token_id never got pointed at
+// token 24 ("</assistant>", the model's real turn-end token), so the server
+// never stops generating on its own. Verified via /tokenize + /props.
+var quirkOverrideKV = map[string][]string{
+	"unsloth/Laguna-S-2.1-GGUF": {"tokenizer.ggml.eot_token_id=int:24"},
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		runInteractive("", nil)
@@ -140,10 +149,21 @@ func runInteractive(mode string, args []string) {
 		cmdArgs = append(cmdArgs, "--mmproj", model.MMProj)
 	}
 	if mode == "serve" {
-		cmdArgs = append(cmdArgs, "--port", itoa(*port))
+		// -np 1: force single-slot serialized decoding. llama-server defaults
+		// to -np -1 (auto, multiple concurrent slots), but this ROCm/HIP
+		// build has a reproducible bug where a second concurrent request
+		// while another slot is mid-generation comes back degenerate
+		// (repeats a single garbage token forever). A coding agent only
+		// ever needs one active generation at a time, so there's no
+		// throughput cost to disabling slot concurrency here.
+		cmdArgs = append(cmdArgs, "--port", itoa(*port), "--parallel", "1")
 	}
 	if useMTP {
 		cmdArgs = append(cmdArgs, "--spec-type", "draft-mtp", "--spec-draft-n-max", itoa(*mtpN))
+	}
+	for _, kv := range quirkOverrideKV[model.Repo] {
+		fmt.Printf("-> applying known fix: --override-kv %s\n", kv)
+		cmdArgs = append(cmdArgs, "--override-kv", kv)
 	}
 	cmdArgs = append(cmdArgs, fs.Args()...)
 
