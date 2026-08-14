@@ -42,6 +42,9 @@ func main() {
 	case "run", "serve":
 		runInteractive(os.Args[1], os.Args[2:])
 		return
+	case "swap":
+		runSwap(os.Args[2:])
+		return
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -57,6 +60,7 @@ Usage:
   alpaca                          interactive: pick mode, model, context
   alpaca run    [flags] [-- extra llama-cli flags]
   alpaca serve  [flags] [-- extra llama-server flags]
+  alpaca swap   [flags]           memory-aware multi-model swap server
   alpaca list                     print discovered models and exit
 
 Flags:
@@ -66,7 +70,13 @@ Flags:
   -port   <n>          serve mode port (default 11212)
   -mtp                 enable MTP speculative decoding (draft-mtp)
   -mtp-n  <n>          MTP draft tokens (default 2)
-  -cache  <dir>        override HF hub cache dir`)
+  -cache  <dir>        override HF hub cache dir
+
+alpaca swap flags:
+  -listen <addr>       address to listen on (default :8090)
+  -mem-budget-gb <n>   override auto-detected GPU memory budget (default: auto)
+  -mem-margin-gb <n>   GB reserved for the OS, excluded from budget (default 10)
+  -health-timeout <d>  time to wait for a spawned model to become healthy (default 120s)`)
 }
 
 func listModels() {
@@ -144,35 +154,35 @@ func runInteractive(mode string, args []string) {
 	binPath, err := exec.LookPath(binName)
 	must(err)
 
-	cmdArgs := []string{binPath, "-m", model.Path, "-ngl", itoa(*ngl), "-c", itoa(*ctx)}
-	if model.MMProj != "" {
-		cmdArgs = append(cmdArgs, "--mmproj", model.MMProj)
-	}
-	if mode == "serve" {
-		// -np 1: force single-slot serialized decoding. llama-server defaults
-		// to -np -1 (auto, multiple concurrent slots), but this ROCm/HIP
-		// build has a reproducible bug where a second concurrent request
-		// while another slot is mid-generation comes back degenerate
-		// (repeats a single garbage token forever). A coding agent only
-		// ever needs one active generation at a time, so there's no
-		// throughput cost to disabling slot concurrency here.
-		cmdArgs = append(cmdArgs, "--port", itoa(*port), "--parallel", "1")
-	}
-	if useMTP {
-		cmdArgs = append(cmdArgs, "--spec-type", "draft-mtp", "--spec-draft-n-max", itoa(*mtpN))
-	}
 	for _, kv := range quirkOverrideKV[model.Repo] {
 		fmt.Printf("-> applying known fix: --override-kv %s\n", kv)
-		cmdArgs = append(cmdArgs, "--override-kv", kv)
 	}
-	cmdArgs = append(cmdArgs, fs.Args()...)
+	// -np 1: force single-slot serialized decoding. llama-server defaults
+	// to -np -1 (auto, multiple concurrent slots), but this ROCm/HIP build
+	// has a reproducible bug where a second concurrent request while
+	// another slot is mid-generation comes back degenerate (repeats a
+	// single garbage token forever). A coding agent only ever needs one
+	// active generation at a time, so there's no throughput cost to
+	// disabling slot concurrency here.
+	llamaArgs := buildLlamaArgs(llamaArgsConfig{
+		ModelPath:  model.Path,
+		MMProj:     model.MMProj,
+		NGL:        *ngl,
+		Ctx:        *ctx,
+		Serve:      mode == "serve",
+		Port:       *port,
+		Parallel:   1,
+		MTP:        useMTP,
+		MTPN:       *mtpN,
+		OverrideKV: quirkOverrideKV[model.Repo],
+		Extra:      fs.Args(),
+	})
+	cmdArgs := append([]string{binPath}, llamaArgs...)
 
 	fmt.Printf("-> %s %s\n", binName, model)
 	env := append(os.Environ(), "GGML_CUDA_ENABLE_UNIFIED_MEMORY=1")
 	must(syscall.Exec(binPath, cmdArgs, env))
 }
-
-func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
 func must(err error) {
 	if err != nil {

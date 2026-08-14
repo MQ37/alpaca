@@ -10,11 +10,14 @@
 
 ---
 
-**alpaca** is a small session launcher for `llama.cpp` (`llama-cli` /
-`llama-server`). It discovers GGUF models already cached by the
-`huggingface_hub` client, lets you pick one interactively (or via flags), and
-execs `llama-cli`/`llama-server` with sane defaults — GPU offload, unified
-memory, context size, optional MTP speculative decoding.
+**alpaca** is a session launcher and memory-aware swap server for
+`llama.cpp` (`llama-cli` / `llama-server`). It discovers GGUF models already
+cached by the `huggingface_hub` client, lets you pick one interactively (or
+via flags), and execs `llama-cli`/`llama-server` with sane defaults — GPU
+offload, unified memory, context size, optional MTP speculative decoding.
+`alpaca swap` runs a long-lived OpenAI-compatible proxy that loads/evicts
+models on demand, keeping several loaded at once if they fit the GPU memory
+budget.
 
 ```bash
 go build -o alpaca .
@@ -33,8 +36,9 @@ go build -o alpaca .
 - **Interactive by default** — no args prompts for mode (run/serve), model
   (numbered list), and context length. Any flag you pass explicitly skips its
   prompt.
-- **Two modes** — `run` (`llama-cli`, interactive chat) and `serve`
-  (`llama-server`, HTTP API on `-port`, default `11212`).
+- **Three modes** — `run` (`llama-cli`, interactive chat), `serve`
+  (`llama-server`, HTTP API on `-port`, default `11212`), and `swap`
+  (memory-aware multi-model swap server, see below).
 - **MTP speculative decoding** — auto-detected from repo/label name
   (`mtp` substring); prompts to enable `--spec-type draft-mtp` with
   `-mtp-n` draft tokens (default 2).
@@ -53,6 +57,7 @@ go build -o alpaca .
 alpaca                          # interactive: pick mode, model, context
 alpaca run    [flags] [-- extra llama-cli flags]
 alpaca serve  [flags] [-- extra llama-server flags]
+alpaca swap   [flags]           # memory-aware multi-model swap server
 alpaca list                     # print discovered models and exit
 ```
 
@@ -70,6 +75,40 @@ Flags:
 
 ---
 
+## 🔀 `alpaca swap`
+
+A long-lived OpenAI/llama.cpp-compatible HTTP proxy. Every request's
+`model` field selects a discovered GGUF; if it isn't already running,
+`alpaca swap` estimates its memory footprint (on-disk weight size + a
+KV-cache calculation from GGUF architecture metadata + a fixed compute
+overhead), evicts the least-recently-used loaded model(s) only if needed
+to fit under the GPU memory budget, spawns it, waits for `/health`, then
+reverse-proxies the request through — including streaming responses.
+
+Unlike a single-model swap, several models stay loaded concurrently
+whenever their combined estimate fits the budget, instead of always
+evicting the current one.
+
+```bash
+alpaca swap -listen :8090
+```
+
+| Flag | Default | What |
+|---|---|---|
+| `-listen <addr>` | `:8090` | address to listen on |
+| `-ctx <n>` | 4096 | context length applied to every swap-managed model |
+| `-ngl <n>` | 99 | GPU layers to offload |
+| `-mem-budget-gb <n>` | auto | override the auto-detected GPU memory budget |
+| `-mem-margin-gb <n>` | 10 | GB reserved for the OS, excluded from the budget |
+| `-health-timeout <d>` | 120s | how long to wait for a spawned model to become healthy |
+| `-cache <dir>` | HF hub default | override HF hub cache dir |
+
+Model IDs are `<repo>/<label>` (see `alpaca list`). The budget auto-detects
+from `/sys/class/drm/card*/device/mem_info_{vram,gtt}_total` (AMD unified
+memory) minus the margin; override with `-mem-budget-gb` on other GPUs.
+
+---
+
 ## 📦 Dependencies
 
 Zero third-party dependencies — standard library only (`flag`, `os/exec`,
@@ -82,4 +121,6 @@ Zero third-party dependencies — standard library only (`flag`, `os/exec`,
 - **Single static binary**, no config file — flags + env vars only.
 - **Reads the HF hub cache layout directly** — no `huggingface_hub` Python
   dependency at runtime, just the on-disk convention it writes.
-- **Suckless-ish** — 4 files, ~350 lines total, one job.
+- **Suckless-ish** — one file per concern (GGUF parsing, memory estimate,
+  eviction planning, process supervision, HTTP proxy), no framework, no
+  external process manager.
