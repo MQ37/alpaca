@@ -19,22 +19,18 @@ offload, unified memory, context size, optional MTP speculative decoding.
 models on demand, keeping several loaded at once if they fit the GPU memory
 budget.
 
-Source lives in `src/`; `go.mod` is there too.
+Source lives in `cmd/alpaca/`; `go.mod` is at the repo root (same layout as
+most Go CLIs — one `cmd/<binary>` package per binary).
 
 ```bash
-go install github.com/MQ37/alpaca/src@latest
-GOBIN="$(go env GOBIN)"; [ -z "$GOBIN" ] && GOBIN="$(go env GOPATH)/bin"
-mv "$GOBIN/src" "$GOBIN/alpaca"
+go install github.com/MQ37/alpaca/cmd/alpaca@latest   # installs $GOBIN/alpaca
 ```
-
-(`go install` names the binary after the last path element — `src` here — so
-the `mv` gives it the `alpaca` name.)
 
 Or build from a clone:
 
 ```bash
 git clone https://github.com/MQ37/alpaca && cd alpaca
-go build -o alpaca ./src
+go build -o alpaca ./cmd/alpaca
 ./alpaca              # interactive: pick mode, model, context
 ```
 
@@ -116,6 +112,26 @@ alpaca swap -listen :8090
 | `-mem-margin-gb <n>` | 10 | GB reserved for the OS, excluded from the budget |
 | `-health-timeout <d>` | 120s | how long to wait for a spawned model to become healthy |
 | `-cache <dir>` | HF hub default | override HF hub cache dir |
+| `-settings <path>` | none | JSON file of per-model overrides (see below) |
+
+**Per-model settings**: `-ctx` sets one context length for every model,
+which is wrong when models differ wildly in size — a 15GB model and a 68GB
+model don't have the same memory headroom for KV cache. `-settings` points
+at a JSON file keyed by the same `<repo>/<label>` model ID, currently
+supporting a per-model `ctx` override (falls back to `-ctx` when absent or
+`0`):
+
+```json
+{
+  "unsloth/Laguna-S-2.1-GGUF/UD-Q4_K_XL/Laguna-S-2.1-UD-Q4_K_XL": {"ctx": 65536},
+  "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL": {"ctx": 131072}
+}
+```
+
+Pick values that actually fit: KV cache scales linearly with `ctx`, and a
+large weight model at a huge context can exceed the whole GPU budget by
+itself (`fits=false` — the request then always 503s, never mind eviction).
+Check `swap budget: N GiB` at startup against your models' sizes first.
 
 **Model name in requests**: the `model` field must be the exact
 `<repo>/<label>` string from `alpaca list` (e.g.
@@ -144,8 +160,9 @@ Zero third-party dependencies — standard library only (`flag`, `os/exec`,
 
 ## 🧭 Design
 
-- **Layout**: all Go source + `go.mod` under `src/`; `README.md`/`docs/`
-  stay at repo root. Build with `go build -o alpaca ./src`.
+- **Layout**: `go.mod` + all Go source under `cmd/alpaca/` at the repo root
+  (standard Go `cmd/<binary>` layout, same as `go install`-friendly CLIs).
+  Build with `go build -o alpaca ./cmd/alpaca`.
 - **Single static binary**, no config file — flags + env vars only.
 - **Reads the HF hub cache layout directly** — no `huggingface_hub` Python
   dependency at runtime, just the on-disk convention it writes.
