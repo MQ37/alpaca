@@ -103,8 +103,20 @@ alpaca swap -listen :8090
 | `-health-timeout <d>` | 120s | how long to wait for a spawned model to become healthy |
 | `-cache <dir>` | HF hub default | override HF hub cache dir |
 
-Model IDs are `<repo>/<label>` (see `alpaca list`). The budget auto-detects
-from `/sys/class/drm/card*/device/mem_info_{vram,gtt}_total` (AMD unified
+**Model name in requests**: the `model` field must be the exact
+`<repo>/<label>` string from `alpaca list` (e.g.
+`unsloth/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL`), not a
+short name — anything else gets a `404 unknown model`:
+
+```bash
+curl http://127.0.0.1:8090/v1/chat/completions -d '{
+  "model": "unsloth/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL",
+  "messages": [{"role": "user", "content": "hi"}]
+}'
+```
+
+The budget auto-detects from
+`/sys/class/drm/card*/device/mem_info_{vram,gtt}_total` (AMD unified
 memory) minus the margin; override with `-mem-budget-gb` on other GPUs.
 
 ---
