@@ -19,8 +19,22 @@ offload, unified memory, context size, optional MTP speculative decoding.
 models on demand, keeping several loaded at once if they fit the GPU memory
 budget.
 
+Source lives in `src/`; `go.mod` is there too.
+
 ```bash
-go build -o alpaca .
+go install github.com/MQ37/alpaca/src@latest
+GOBIN="$(go env GOBIN)"; [ -z "$GOBIN" ] && GOBIN="$(go env GOPATH)/bin"
+mv "$GOBIN/src" "$GOBIN/alpaca"
+```
+
+(`go install` names the binary after the last path element — `src` here — so
+the `mv` gives it the `alpaca` name.)
+
+Or build from a clone:
+
+```bash
+git clone https://github.com/MQ37/alpaca && cd alpaca
+go build -o alpaca ./src
 ./alpaca              # interactive: pick mode, model, context
 ```
 
@@ -130,6 +144,8 @@ Zero third-party dependencies — standard library only (`flag`, `os/exec`,
 
 ## 🧭 Design
 
+- **Layout**: all Go source + `go.mod` under `src/`; `README.md`/`docs/`
+  stay at repo root. Build with `go build -o alpaca ./src`.
 - **Single static binary**, no config file — flags + env vars only.
 - **Reads the HF hub cache layout directly** — no `huggingface_hub` Python
   dependency at runtime, just the on-disk convention it writes.
