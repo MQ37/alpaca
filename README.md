@@ -125,12 +125,16 @@ keyed by the same `<repo>/<label>` model ID:
 {
   "unsloth/Laguna-S-2.1-GGUF/UD-Q4_K_XL/Laguna-S-2.1-UD-Q4_K_XL": {"ctx": 65536},
   "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL": {"ctx": 131072},
-  "unsloth/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL": {"ctx": 262144, "reasoning_budget": 1024}
+  "unsloth/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL": {
+    "ctx": 262144, "reasoning_budget": 8192, "extra": ["--cache-ram", "0"]
+  }
 }
 ```
 
 `ctx: 0`/`reasoning_budget: 0`/absent all fall back to the `-ctx`/
-`-reasoning-budget` flag defaults.
+`-reasoning-budget` flag defaults. `extra` is a raw passthrough of
+additional `llama-server` CLI flags for that one model (e.g. disabling its
+prompt cache — see `docs/known-issues.md` for why).
 
 Pick `ctx` values that actually fit: KV cache scales linearly with `ctx`,
 and a large weight model at a huge context can exceed the whole GPU budget

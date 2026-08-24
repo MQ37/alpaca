@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -108,5 +109,31 @@ func TestReasoningBudgetFor_FallsBackWhenAbsentOrZero(t *testing.T) {
 	}
 	if got := reasoningBudgetFor(map[string]modelSettings{}, "model-b", 5); got != 5 {
 		t.Errorf("reasoningBudgetFor = %d, want fallback 5", got)
+	}
+}
+
+func TestLoadSettings_ParsesExtra(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	body := `{"some/model": {"extra": ["--cache-ram", "0"]}}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := loadSettings(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"--cache-ram", "0"}
+	if got := settings["some/model"].Extra; !reflect.DeepEqual(got, want) {
+		t.Errorf("Extra = %v, want %v", got, want)
+	}
+}
+
+func TestExtraFor_ReturnsSettingsExtraOrNilWhenAbsent(t *testing.T) {
+	settings := map[string]modelSettings{"model-a": {Extra: []string{"--cache-ram", "0"}}}
+	if got := extraFor(settings, "model-a"); !reflect.DeepEqual(got, []string{"--cache-ram", "0"}) {
+		t.Errorf("extraFor = %v, want [--cache-ram 0]", got)
+	}
+	if got := extraFor(settings, "model-b"); len(got) != 0 {
+		t.Errorf("extraFor for absent model = %v, want empty", got)
 	}
 }

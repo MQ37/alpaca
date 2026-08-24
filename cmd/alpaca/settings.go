@@ -16,6 +16,11 @@ type modelSettings struct {
 	// Gemma GGUF imports run away generating <unused*> filler under an
 	// unrestricted budget — cap those explicitly here.
 	ReasoningBudget int `json:"reasoning_budget"`
+	// Extra is a raw passthrough of additional llama-server CLI flags for
+	// this model, e.g. ["--cache-ram", "0"] to disable prompt-cache reuse
+	// for a model whose corrupted generations otherwise poison later,
+	// unrelated requests via KV-cache/prefix reuse (see docs/known-issues.md).
+	Extra []string `json:"extra"`
 }
 
 // loadSettings reads a JSON file of {"<model-id>": {"ctx": N}, ...}. An
@@ -56,4 +61,9 @@ func reasoningBudgetFor(settings map[string]modelSettings, id string, fallback i
 		return s.ReasoningBudget
 	}
 	return fallback
+}
+
+// extraFor returns a model's raw extra CLI flags, or nil if it has none.
+func extraFor(settings map[string]modelSettings, id string) []string {
+	return settings[id].Extra
 }

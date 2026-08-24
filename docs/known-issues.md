@@ -84,7 +84,29 @@ even with the GPU otherwise idle).
 
 **Workaround (what alpaca does)**: per-model `reasoning_budget` in
 `-settings` (see § alpaca swap above) passes `--reasoning-budget N` at spawn
-time. `alpaca`'s own bastion deployment caps this model at `1024` — verified
-clean at full `ctx=262144` on both a trivial prompt and an 800-token LHC
-explanation (the same question from the upstream bug report) with zero
+time. `alpaca`'s own bastion deployment caps this model at `8192` — verified
+clean at full `ctx=262144` on both a trivial prompt and an 800/1500-token
+LHC explanation (the same question from the upstream bug report) with zero
 `<unused*>` tokens in either the reasoning or content fields.
+
+**Second, separate finding — corruption persists across unrelated requests**:
+a client that sends an OpenAI-style `reasoning_effort` body field (poisson's
+Ollama-compatible provider does, for its `/effort` setting) can still trigger
+the same `<unused*>` runaway despite `--reasoning-budget` being set — this
+field is read by `llama-server` per-request and isn't gated by the CLI flag.
+Worse: once one generation degenerates, the corruption doesn't stay confined
+to that one request — every *subsequent* request on the process, including
+ones with no `reasoning_effort` field at all and completely unrelated
+content, comes back corrupted too, until the process is restarted. Root
+cause: `llama-server`'s prompt-cache / KV-cache-reuse (`--cache-ram`, default
+8192 MiB — logged as `selected slot by LCP similarity, f_sim_best=...`)
+reuses cached KV state across requests that share a prefix; once a
+generation corrupts that cached state, reuse spreads the corruption to
+everything after it on that slot.
+
+**Workaround (what alpaca does)**: per-model `extra` in `-settings` passes
+raw CLI flags at spawn time; this model's entry adds `["--cache-ram", "0"]`
+to fully disable prompt-cache reuse, so a bad generation can never poison a
+later, unrelated request. Verified: 5 back-to-back requests each including
+`reasoning_effort: "medium"` all came back clean with this flag set (all 5
+failed/degenerated without it in the same conditions before this fix).

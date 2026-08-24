@@ -102,6 +102,7 @@ func runSwap(args []string) {
 			MTPN:            defaultMTPn,
 			ReasoningBudget: reasoningBudgetFor(settings, id, *reasoningBudget),
 			OverrideKV:      quirkOverrideKV[entry.Model.Repo],
+			Extra:           extraFor(settings, id),
 		})
 		cmd := exec.Command(binPath, llamaArgs...)
 		cmd.Env = append(os.Environ(), "GGML_CUDA_ENABLE_UNIFIED_MEMORY=1")
