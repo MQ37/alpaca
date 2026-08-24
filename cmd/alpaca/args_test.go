@@ -62,6 +62,32 @@ func TestBuildLlamaArgs_FullOptions_OrderMatchesOriginalInlineLogic(t *testing.T
 	}
 }
 
+func TestBuildLlamaArgs_ReasoningBudget_AddsFlagWhenNonZero(t *testing.T) {
+	got := buildLlamaArgs(llamaArgsConfig{
+		ModelPath:       "/models/foo.gguf",
+		NGL:             99,
+		Ctx:             4096,
+		ReasoningBudget: 1024,
+	})
+	want := []string{"-m", "/models/foo.gguf", "-ngl", "99", "-c", "4096", "--reasoning-budget", "1024"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestBuildLlamaArgs_ReasoningBudget_OmittedWhenZero(t *testing.T) {
+	got := buildLlamaArgs(llamaArgsConfig{
+		ModelPath: "/models/foo.gguf",
+		NGL:       99,
+		Ctx:       4096,
+	})
+	for _, arg := range got {
+		if arg == "--reasoning-budget" {
+			t.Fatalf("reasoning-budget must be omitted when zero, got %v", got)
+		}
+	}
+}
+
 func TestBuildLlamaArgs_RunMode_OmitsPortAndParallel(t *testing.T) {
 	got := buildLlamaArgs(llamaArgsConfig{
 		ModelPath: "/models/foo.gguf",

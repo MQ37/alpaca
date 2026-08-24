@@ -10,6 +10,12 @@ import (
 // same "<repo>/<label>" id used in request bodies and the registry.
 type modelSettings struct {
 	Ctx int `json:"ctx"` // 0 = fall back to the -ctx flag default
+	// ReasoningBudget overrides --reasoning-budget for this model; 0 falls
+	// back to the -reasoning-budget flag default (which itself defaults to
+	// 0 = omit the flag, i.e. llama-server's own -1/unrestricted). Some
+	// Gemma GGUF imports run away generating <unused*> filler under an
+	// unrestricted budget — cap those explicitly here.
+	ReasoningBudget int `json:"reasoning_budget"`
 }
 
 // loadSettings reads a JSON file of {"<model-id>": {"ctx": N}, ...}. An
@@ -38,6 +44,16 @@ func loadSettings(path string) (map[string]modelSettings, error) {
 func ctxFor(settings map[string]modelSettings, id string, fallback int) int {
 	if s, ok := settings[id]; ok && s.Ctx > 0 {
 		return s.Ctx
+	}
+	return fallback
+}
+
+// reasoningBudgetFor resolves the effective --reasoning-budget for a model:
+// its settings override when present and non-zero, else fallback (the
+// -reasoning-budget flag).
+func reasoningBudgetFor(settings map[string]modelSettings, id string, fallback int) int {
+	if s, ok := settings[id]; ok && s.ReasoningBudget != 0 {
+		return s.ReasoningBudget
 	}
 	return fallback
 }

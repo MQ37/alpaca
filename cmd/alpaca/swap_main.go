@@ -38,6 +38,7 @@ func runSwap(args []string) {
 	listen := fs.String("listen", ":8090", "address to listen on")
 	ctx := fs.Int("ctx", defaultCtx, "context length for every swap-managed model")
 	ngl := fs.Int("ngl", defaultNGL, "GPU layers to offload")
+	reasoningBudget := fs.Int("reasoning-budget", 0, "default --reasoning-budget for every swap-managed model (0 = omit flag, llama-server default -1/unrestricted); per-model override via -settings")
 	memMarginGB := fs.Int64("mem-margin-gb", defaultGPUMemMargin>>30, "GB of GPU memory reserved for the OS, excluded from the swap budget")
 	memBudgetGB := fs.Int64("mem-budget-gb", 0, "override auto-detected GPU memory budget (GB); 0 = auto-detect from /sys/class/drm")
 	healthTimeout := fs.Duration("health-timeout", 120*time.Second, "how long to wait for a spawned model to become healthy")
@@ -90,16 +91,17 @@ func runSwap(args []string) {
 			return nil, fmt.Errorf("model %q not in registry", id)
 		}
 		llamaArgs := buildLlamaArgs(llamaArgsConfig{
-			ModelPath:  entry.Model.Path,
-			MMProj:     entry.Model.MMProj,
-			NGL:        *ngl,
-			Ctx:        ctxFor(settings, id, *ctx),
-			Serve:      true,
-			Port:       port,
-			Parallel:   1,
-			MTP:        entry.Model.MTP,
-			MTPN:       defaultMTPn,
-			OverrideKV: quirkOverrideKV[entry.Model.Repo],
+			ModelPath:       entry.Model.Path,
+			MMProj:          entry.Model.MMProj,
+			NGL:             *ngl,
+			Ctx:             ctxFor(settings, id, *ctx),
+			Serve:           true,
+			Port:            port,
+			Parallel:        1,
+			MTP:             entry.Model.MTP,
+			MTPN:            defaultMTPn,
+			ReasoningBudget: reasoningBudgetFor(settings, id, *reasoningBudget),
+			OverrideKV:      quirkOverrideKV[entry.Model.Repo],
 		})
 		cmd := exec.Command(binPath, llamaArgs...)
 		cmd.Env = append(os.Environ(), "GGML_CUDA_ENABLE_UNIFIED_MEMORY=1")

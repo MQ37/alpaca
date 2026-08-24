@@ -113,25 +113,36 @@ alpaca swap -listen :8090
 | `-health-timeout <d>` | 120s | how long to wait for a spawned model to become healthy |
 | `-cache <dir>` | HF hub default | override HF hub cache dir |
 | `-settings <path>` | none | JSON file of per-model overrides (see below) |
+| `-reasoning-budget <n>` | 0 (omit flag) | default `--reasoning-budget` for every model; per-model override via `-settings` |
 
-**Per-model settings**: `-ctx` sets one context length for every model,
-which is wrong when models differ wildly in size — a 15GB model and a 68GB
-model don't have the same memory headroom for KV cache. `-settings` points
-at a JSON file keyed by the same `<repo>/<label>` model ID, currently
-supporting a per-model `ctx` override (falls back to `-ctx` when absent or
-`0`):
+**Per-model settings**: `-ctx`/`-reasoning-budget` set one value for every
+model, which is wrong when models differ — a 15GB model and a 68GB model
+don't have the same memory headroom, and some GGUF imports need a bounded
+reasoning budget while others don't. `-settings` points at a JSON file
+keyed by the same `<repo>/<label>` model ID:
 
 ```json
 {
   "unsloth/Laguna-S-2.1-GGUF/UD-Q4_K_XL/Laguna-S-2.1-UD-Q4_K_XL": {"ctx": 65536},
-  "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL": {"ctx": 131072}
+  "unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL": {"ctx": 131072},
+  "unsloth/gemma-4-26B-A4B-it-GGUF/gemma-4-26B-A4B-it-UD-Q4_K_XL": {"ctx": 262144, "reasoning_budget": 1024}
 }
 ```
 
-Pick values that actually fit: KV cache scales linearly with `ctx`, and a
-large weight model at a huge context can exceed the whole GPU budget by
-itself (`fits=false` — the request then always 503s, never mind eviction).
-Check `swap budget: N GiB` at startup against your models' sizes first.
+`ctx: 0`/`reasoning_budget: 0`/absent all fall back to the `-ctx`/
+`-reasoning-budget` flag defaults.
+
+Pick `ctx` values that actually fit: KV cache scales linearly with `ctx`,
+and a large weight model at a huge context can exceed the whole GPU budget
+by itself (`fits=false` — the request then always 503s, never mind
+eviction). Check `swap budget: N GiB` at startup against your models'
+sizes first.
+
+`reasoning_budget` caps `llama-server`'s own thinking-token budget
+(default: `-1`, unrestricted). Some Gemma GGUF imports run away generating
+`<unused*>` filler tokens under an unrestricted budget — see
+[llama.cpp#21321](https://github.com/ggml-org/llama.cpp/issues/21321); a
+bounded budget (e.g. `1024`) fixes it.
 
 **Model name in requests**: the `model` field must be the exact
 `<repo>/<label>` string from `alpaca list` (e.g.

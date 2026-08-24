@@ -78,3 +78,35 @@ func TestCtxFor_FallsBackWhenZero(t *testing.T) {
 		t.Errorf("ctxFor = %d, want fallback 4096", got)
 	}
 }
+
+func TestLoadSettings_ParsesReasoningBudget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	body := `{"some/model": {"ctx": 262144, "reasoning_budget": 1024}}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := loadSettings(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := settings["some/model"].ReasoningBudget; got != 1024 {
+		t.Errorf("ReasoningBudget = %d, want 1024", got)
+	}
+}
+
+func TestReasoningBudgetFor_UsesOverrideWhenNonZero(t *testing.T) {
+	settings := map[string]modelSettings{"model-a": {ReasoningBudget: 1024}}
+	if got := reasoningBudgetFor(settings, "model-a", 0); got != 1024 {
+		t.Errorf("reasoningBudgetFor = %d, want 1024", got)
+	}
+}
+
+func TestReasoningBudgetFor_FallsBackWhenAbsentOrZero(t *testing.T) {
+	settings := map[string]modelSettings{"model-a": {}}
+	if got := reasoningBudgetFor(settings, "model-a", -1); got != -1 {
+		t.Errorf("reasoningBudgetFor = %d, want fallback -1", got)
+	}
+	if got := reasoningBudgetFor(map[string]modelSettings{}, "model-b", 5); got != 5 {
+		t.Errorf("reasoningBudgetFor = %d, want fallback 5", got)
+	}
+}

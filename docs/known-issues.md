@@ -56,3 +56,35 @@ over HTTP, see `tools/cli/cli-server.h`).
 `--override-kv tokenizer.ggml.eot_token_id=int:24` when launching this
 repo, which fixes end-of-turn detection at model-load time without touching
 the cached `.gguf` file.
+
+## 3. `unsloth/gemma-4-26B-A4B-it-GGUF` generates unbounded `<unused*>` filler tokens
+
+**Symptom:** at large context (`ctx=262144`, the model's own advertised max),
+even a trivial prompt ("hello bro") returns nothing but `<unused49><unused49>...`
+repeated until `max_tokens`. Confirmed the same architecture family
+(`gemma4`), same specific model, and same symptom (`<unused24>` there) is a
+known upstream bug, not something wrong with this GGUF specifically or with
+context size: [ggml-org/llama.cpp#21321](https://github.com/ggml-org/llama.cpp/issues/21321).
+
+**Root cause:** `llama-server`'s own reasoning/thinking-budget tracking
+defaults to `-1` (unrestricted, printed internally as `2147483647`). Gemma 4's
+chat template activates a "thinking" phase per response; with no cap, the
+model can run away generating reasoning filler that degenerates into
+`<unused*>` placeholder tokens instead of ever reaching real content. Not a
+context-size, rope-scaling, or SWA-cache bug — reproduced this exact failure
+even on a 5-word prompt (position ~10), and reproduced it going away at the
+same `ctx=262144` with the budget capped, including on a long realistic
+tool-heavy multi-turn prompt.
+
+**Ruled out first**: rope-scaling metadata (none embedded — this arch's
+`context_length=262144` is native RoPE with hybrid sliding-window attention,
+no YaRN to misconfigure) and `--swa-full` (correctness flag for hybrid-SWA
+architectures — OOMs at this size, needs one 50GB contiguous KV allocation
+even with the GPU otherwise idle).
+
+**Workaround (what alpaca does)**: per-model `reasoning_budget` in
+`-settings` (see § alpaca swap above) passes `--reasoning-budget N` at spawn
+time. `alpaca`'s own bastion deployment caps this model at `1024` — verified
+clean at full `ctx=262144` on both a trivial prompt and an 800-token LHC
+explanation (the same question from the upstream bug report) with zero
+`<unused*>` tokens in either the reasoning or content fields.
