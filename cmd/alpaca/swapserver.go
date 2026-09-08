@@ -6,18 +6,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 )
 
 // errUnknownModel is returned by an estimator func when the requested
 // model isn't in the discovered/configured set.
 var errUnknownModel = errors.New("unknown model")
 
-// extractModelID reads the "model" field from an OpenAI/llama.cpp-style
-// JSON request body without needing to know the rest of the schema.
-func extractModelID(body []byte) (string, error) {
+// extractModelID reads the "model" field from a request body: either an
+// OpenAI/llama.cpp-style JSON body (chat/completions) or a multipart
+// form (audio transcriptions, which must send the file as multipart).
+func extractModelID(body []byte, contentType string) (string, error) {
+	if mediaType, params, err := mime.ParseMediaType(contentType); err == nil && strings.HasPrefix(mediaType, "multipart/") {
+		return extractModelIDFromMultipart(body, params["boundary"])
+	}
+
 	var payload struct {
 		Model string `json:"model"`
 	}
@@ -28,6 +36,32 @@ func extractModelID(body []byte) (string, error) {
 		return "", fmt.Errorf("missing required \"model\" field")
 	}
 	return payload.Model, nil
+}
+
+// extractModelIDFromMultipart scans a multipart/form-data body for its
+// "model" field without consuming the file part's contents.
+func extractModelIDFromMultipart(body []byte, boundary string) (string, error) {
+	mr := multipart.NewReader(bytes.NewReader(body), boundary)
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", fmt.Errorf("invalid multipart body: %w", err)
+		}
+		if part.FormName() == "model" {
+			val, err := io.ReadAll(part)
+			if err != nil {
+				return "", fmt.Errorf("reading model field: %w", err)
+			}
+			if len(val) == 0 {
+				break
+			}
+			return string(val), nil
+		}
+	}
+	return "", fmt.Errorf("missing required \"model\" field")
 }
 
 // modelEstimator resolves a model ID to its estimated memory footprint at
@@ -46,7 +80,7 @@ func newSwapHandler(sup *supervisor, estimate modelEstimator) http.Handler {
 			return
 		}
 
-		modelID, err := extractModelID(body)
+		modelID, err := extractModelID(body, r.Header.Get("Content-Type"))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

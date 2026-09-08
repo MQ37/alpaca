@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestExtractModelID_ParsesModelField(t *testing.T) {
-	id, err := extractModelID([]byte(`{"model":"muse-glimmer:30b","messages":[]}`))
+	id, err := extractModelID([]byte(`{"model":"muse-glimmer:30b","messages":[]}`), "application/json")
 	if err != nil {
 		t.Fatalf("extractModelID: %v", err)
 	}
@@ -20,16 +21,53 @@ func TestExtractModelID_ParsesModelField(t *testing.T) {
 }
 
 func TestExtractModelID_ErrorsOnMissingField(t *testing.T) {
-	_, err := extractModelID([]byte(`{"messages":[]}`))
+	_, err := extractModelID([]byte(`{"messages":[]}`), "application/json")
 	if err == nil {
 		t.Fatal("expected error for missing model field")
 	}
 }
 
 func TestExtractModelID_ErrorsOnInvalidJSON(t *testing.T) {
-	_, err := extractModelID([]byte(`not json`))
+	_, err := extractModelID([]byte(`not json`), "application/json")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+func TestExtractModelID_ParsesMultipartModelField(t *testing.T) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if err := mw.WriteField("model", "ggml-org/Qwen3-ASR-1.7B-GGUF/Qwen3-ASR-1.7B-Q8_0"); err != nil {
+		t.Fatalf("WriteField: %v", err)
+	}
+	fw, err := mw.CreateFormFile("file", "audio.wav")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	fw.Write([]byte("fake-audio-bytes"))
+	mw.Close()
+
+	id, err := extractModelID(buf.Bytes(), mw.FormDataContentType())
+	if err != nil {
+		t.Fatalf("extractModelID: %v", err)
+	}
+	if want := "ggml-org/Qwen3-ASR-1.7B-GGUF/Qwen3-ASR-1.7B-Q8_0"; id != want {
+		t.Errorf("id = %q, want %q", id, want)
+	}
+}
+
+func TestExtractModelID_ErrorsOnMultipartMissingModelField(t *testing.T) {
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", "audio.wav")
+	if err != nil {
+		t.Fatalf("CreateFormFile: %v", err)
+	}
+	fw.Write([]byte("fake-audio-bytes"))
+	mw.Close()
+
+	if _, err := extractModelID(buf.Bytes(), mw.FormDataContentType()); err == nil {
+		t.Fatal("expected error for missing model field")
 	}
 }
 
