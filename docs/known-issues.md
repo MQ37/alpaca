@@ -110,3 +110,51 @@ to fully disable prompt-cache reuse, so a bad generation can never poison a
 later, unrelated request. Verified: 5 back-to-back requests each including
 `reasoning_effort: "medium"` all came back clean with this flag set (all 5
 failed/degenerated without it in the same conditions before this fix).
+
+## 4. Content bleeds between back-to-back requests on the same slot - no llama-server flag fixes it, only a fresh process
+
+**Symptom:** two sequential (never concurrent - second request launches only
+after the first's `release`) `/v1/chat/completions` calls sharing the same
+system prompt but different user content can get a content fragment from
+the *first* call spliced into the *second's* output - e.g. a sender name
+from one caller's unrelated data appearing in the other caller's otherwise-
+correct response, on the very first generated field after the shared
+system-prompt prefix.
+
+**Reproduced** via `mailtriage`: a standalone Go program called `Synthesize()`
+twice back-to-back with two accounts' real (distinct, non-overlapping)
+digest data against `unsloth/Qwen3.8-27B-GGUF` - the second call's output
+consistently contained a name that only existed in the first call's input,
+100% reproducible across repeated runs. Isolating the second call alone (no
+preceding request in that process at all) produced a *different*, unrelated
+minor garbling instead - proving it's genuine cross-request bleed, not a
+standalone hallucination that happens to look like it.
+
+**Ruled out, in this order, none fixed it**: JSON `cache_prompt: false` body
+field (this build/endpoint appears to ignore it - bastion logs still showed
+`selected slot by LCP similarity` afterward); `--cache-ram 0` (controls
+idle-slot RAM/disk offload, a different subsystem from live-slot reuse);
+`--slot-prompt-similarity 0` (only affects *routing* among multiple slots -
+irrelevant under `--parallel 1`, since there is no other slot to route to);
+`--no-cache-prompt` (llama-server's actual documented toggle for the whole
+prompt-cache subsystem) - identical leak persisted even with this confirmed
+active in the running process's argv. Same integrated-HIP-GPU hardware
+class (gfx1151/Strix Halo) as issue #1 above, but reproduced here in
+strictly serialized single-slot mode, which issue #1's existing workaround
+assumes is safe - it is not sufficient for this failure mode.
+
+**Root cause**: not confirmed at the llama.cpp/HIP-backend level (would need
+upstream bisection similar to issue #1) - but every user-facing cache
+control was exhausted without effect, strongly suggesting stale KV/attention
+state survives in GPU memory across requests regardless of any prompt-cache
+*reuse* toggle, on this specific integrated-GPU backend.
+
+**Workaround (what alpaca does)**: added `POST /unload` (body
+`{"model": "..."}`, see `supervisor.Evict`) to force-stop a model's running
+process so the next request against it spawns a completely fresh one - the
+only thing that reliably guarantees zero residual state, since it's a new
+process with fresh GPU memory rather than a flag toggle on the same one.
+Callers that need this guarantee between two related-but-must-stay-isolated
+requests (e.g. `mailtriage` unloading its digest model before each of
+several accounts' digest synthesis) should call it themselves; alpaca has
+no way to know which requests need this from its own request stream.

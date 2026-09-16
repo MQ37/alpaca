@@ -126,6 +126,43 @@ func TestSupervisor_EnsureModel_FailsHealthCheckCleansUp(t *testing.T) {
 	}
 }
 
+func TestSupervisor_Evict_StopsAndForgetsRunningModel(t *testing.T) {
+	spawned := map[string]*fakeChild{}
+	s := newTestSupervisor(100<<30, spawned)
+
+	if _, err := s.EnsureModel("gemma", 10<<30); err != nil {
+		t.Fatalf("EnsureModel: %v", err)
+	}
+	if !s.Evict("gemma") {
+		t.Fatal("Evict returned false for a running model")
+	}
+	if !spawned["gemma"].stopped {
+		t.Error("expected evicted child to be stopped")
+	}
+
+	// next EnsureModel must spawn a fresh one, not reuse the stopped child
+	spawnCount := 0
+	s.spawn = func(id string, port int) (spawnedChild, error) {
+		spawnCount++
+		c := newFakeChild(true)
+		spawned[id] = c
+		return c, nil
+	}
+	if _, err := s.EnsureModel("gemma", 10<<30); err != nil {
+		t.Fatalf("EnsureModel after evict: %v", err)
+	}
+	if spawnCount != 1 {
+		t.Errorf("spawnCount = %d, want 1 (evicted model must respawn)", spawnCount)
+	}
+}
+
+func TestSupervisor_Evict_ReturnsFalseIfNotRunning(t *testing.T) {
+	s := newTestSupervisor(100<<30, map[string]*fakeChild{})
+	if s.Evict("never-loaded") {
+		t.Error("expected false for a model that was never running")
+	}
+}
+
 func TestSupervisor_Shutdown_StopsEverything(t *testing.T) {
 	spawned := map[string]*fakeChild{}
 	s := newTestSupervisor(100<<30, spawned)

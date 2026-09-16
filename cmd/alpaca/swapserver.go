@@ -68,6 +68,32 @@ func extractModelIDFromMultipart(body []byte, boundary string) (string, error) {
 // the configured context size, or errUnknownModel if it's not registered.
 type modelEstimator func(id string) (int64, error)
 
+// newUnloadHandler builds the POST /unload endpoint: body {"model": "..."}
+// stops that model's running process (if any) so the next request spawns
+// a completely fresh one - see supervisor.Evict and docs/known-issues.md
+// for why a caller may need this instead of any llama-server cache flag.
+func newUnloadHandler(sup *supervisor) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "failed to read request body", http.StatusBadRequest)
+			return
+		}
+		modelID, err := extractModelID(body, r.Header.Get("Content-Type"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		evicted := sup.Evict(modelID)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"evicted": evicted})
+	})
+}
+
 // newSwapHandler builds the HTTP handler for alpaca swap: every request's
 // body is peeked for "model", the supervisor ensures that model is loaded
 // (spawning/evicting as needed), and the request is reverse-proxied

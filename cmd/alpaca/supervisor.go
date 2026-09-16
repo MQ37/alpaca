@@ -144,6 +144,28 @@ func (s *supervisor) doSpawn(id string, port int, estimatedBytes int64) (string,
 	return child.ProxyTarget(), nil
 }
 
+// Evict stops id's running child (if any) and forgets it, so the next
+// EnsureModel call spawns a completely fresh process for it. For callers
+// that must guarantee zero residual GPU/KV state between two requests -
+// every llama-server cache-disabling flag (cache_prompt, cache-ram,
+// slot-prompt-similarity) has been observed to still let content bleed
+// between back-to-back requests on the same process/slot on this hardware
+// (gfx1151/Strix Halo integrated HIP GPU - see docs/known-issues.md); only
+// a fresh process reliably avoids it. Returns false if id wasn't running.
+func (s *supervisor) Evict(id string) bool {
+	s.mu.Lock()
+	rm, ok := s.running[id]
+	if ok {
+		delete(s.running, id)
+	}
+	s.mu.Unlock()
+	if !ok {
+		return false
+	}
+	rm.child.Stop(defaultStopGrace)
+	return true
+}
+
 // Shutdown stops every running child, e.g. on SIGTERM/SIGINT.
 func (s *supervisor) Shutdown(gracePeriod time.Duration) {
 	s.mu.Lock()

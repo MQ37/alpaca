@@ -135,6 +135,10 @@ func runSwap(args []string) {
 		os.Exit(0)
 	}()
 
+	mux := http.NewServeMux()
+	mux.Handle("/unload", newUnloadHandler(sup))
+	mux.Handle("/", newSwapHandler(sup, estimate))
+
 	fmt.Printf("alpaca swap listening on %s\n", *listen)
-	must(http.ListenAndServe(*listen, newSwapHandler(sup, estimate)))
+	must(http.ListenAndServe(*listen, mux))
 }
